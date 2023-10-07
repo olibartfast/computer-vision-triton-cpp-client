@@ -1,8 +1,8 @@
 #include "TaskInterface.hpp"
-class YoloNas : public TaskInterface
+class YOLOv7_NMS : public TaskInterface
 {
 public:
-    YoloNas(int input_width, int input_height)
+    YOLOv7_NMS(int input_width, int input_height)
         : TaskInterface(input_width, input_height) {
     }
 
@@ -58,57 +58,38 @@ public:
     {
     
         std::vector<Result> detections;
-        std::vector<cv::Rect> boxes;
-        std::vector<float> confs;
-        std::vector<int> classIds;
+
         const auto confThreshold = 0.5f;
         const auto iouThreshold = 0.4f;
-        float* scores_result = infer_results[0].data();
-        float* detection_result = infer_results[1].data();
-        const auto scores_shape = infer_shapes[0];
-        const auto detection_shape = infer_shapes[1];
-        
-        const int numClasses =  scores_shape[2];
-        const auto rows = detection_shape[1];
-        const auto boxes_size =  detection_shape[2];
-        for (int i = 0; i < rows; ++i) 
+        float* output0 = infer_results[0].data();
+        const auto results = infer_shapes[0][2];
+        const auto data_buffer = infer_shapes[0][1];
+
+
+        for (int i = 0; i < results; i++)
         {
-            cv::Mat scores(1, numClasses, CV_32FC1, scores_result);
-            cv::Point class_id;
-            double maxClassScore;
-            minMaxLoc(scores, 0, &maxClassScore, 0, &class_id);
-            if (maxClassScore >= confThreshold) 
-            {
-                confs.push_back(maxClassScore);
-                classIds.push_back(class_id.x);
-                float r_w = (frame_size.width * 1.0) / input_width_;
-                float r_h = (frame_size.height * 1.0) / input_height_ ;
-                std::vector<float> bbox(&detection_result[0], &detection_result[4]);
-
-                int left = (int)(bbox[0] * r_w);
-                int top = (int)(bbox[1] * r_h);
-                int width = (int)((bbox[2] - bbox[0]) * r_w);
-                int height = (int)((bbox[3] - bbox[1]) * r_h);
-                boxes.push_back(cv::Rect(left, top, width, height));
-            }
-            // Jump to the next column.
-            scores_result += numClasses;
-            detection_result += boxes_size;
-        }      
-
-        std::vector<int> indices;
-        cv::dnn::NMSBoxes(boxes, confs, confThreshold, iouThreshold, indices);
-
-        for (int idx : indices)
-        {
-            Detection d;
-            d.bbox = cv::Rect(boxes[idx]);
-            d.class_confidence = confs[idx];
-            d.class_id = classIds[idx];
-            detections.emplace_back(d);
-        }        
+            float r_w = (frame_size.width * 1.0) / 640;
+            float r_h = (frame_size.height * 1.0) / 640 ;
+            float batch_id = output0[0];
+            float x0 = output0[1];
+            float y0 = output0[2];
+            float x1 = output0[3];
+            float y1 = output0[4];
+            float cls_id = output0[5];
+            float score = output0[6];    
+            if(score < 0.5f)
+                continue;
+            cv::Rect box(static_cast<int>(x0) * r_w, static_cast<int>(y0) * r_h, static_cast<int>(x1 - x0) * r_w, static_cast<int>(y1 - y0) * r_h);
+            box = box & cv::Rect(0, 0, frame_size.width, frame_size.height); // Clip box to image boundaries                    
+            Detection det;
+            det.class_id = output0[5];
+            det.class_confidence = output0[6];
+            det.bbox = box;
+            output0 += data_buffer;
+            detections.emplace_back(Result(det));
+        }
         return detections;
-    }
+    } 
 
 private:
     // Add additional member variables specific to YoloNas
